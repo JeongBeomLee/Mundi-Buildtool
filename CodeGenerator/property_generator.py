@@ -37,16 +37,22 @@ class PropertyGenerator:
         """ClassInfo로부터 BEGIN_PROPERTIES 블록 생성"""
 
         # mark_type 결정:
-        # 1. AActor 자체는 MARK 없음
-        # 2. AActor를 상속받은 클래스는 MARK_AS_SPAWNABLE
-        # 3. 나머지는 MARK_AS_COMPONENT
+        # 1. Abstract 클래스는 MARK 없음 (언리얼 엔진 패턴)
+        # 2. AActor/UActorComponent 자체는 MARK 없음
+        # 3. AActor를 상속받은 클래스는 MARK_AS_SPAWNABLE (직접/간접)
+        # 4. UActorComponent를 상속받은 클래스는 MARK_AS_COMPONENT (직접/간접)
+        # 5. 그 외 (순수 UObject 등)는 MARK 없음
         mark_type = None
-        if class_info.name == 'AActor':
-            mark_type = None  # AActor는 MARK 없음
-        elif class_info.parent == 'AActor':
-            mark_type = 'SPAWNABLE'  # AActor 직접 상속
-        else:
-            mark_type = 'COMPONENT'  # 그 외 (컴포넌트 등)
+
+        if class_info.is_abstract:
+            mark_type = None  # Abstract 클래스는 에디터에 노출 안 함
+        elif class_info.name in ['AActor', 'UActorComponent']:
+            mark_type = None  # 베이스 클래스는 MARK 없음
+        elif hasattr(class_info, 'is_derived_from') and class_info.is_derived_from('AActor'):
+            mark_type = 'SPAWNABLE'  # AActor 파생 (직접/간접)
+        elif hasattr(class_info, 'is_derived_from') and class_info.is_derived_from('UActorComponent'):
+            mark_type = 'COMPONENT'  # UActorComponent 파생 (직접/간접)
+        # else: mark_type은 None으로 유지 (순수 UObject 등)
 
         # DisplayName과 Description 결정
         display_name = class_info.display_name or class_info.name

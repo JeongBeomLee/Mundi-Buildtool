@@ -159,6 +159,7 @@ class ClassInfo:
     functions: List[Function] = field(default_factory=list)
     is_component: bool = False
     is_spawnable: bool = False
+    is_abstract: bool = False  # UCLASS(Abstract) 플래그
     display_name: str = ""
     description: str = ""
     uclass_metadata: Dict[str, str] = field(default_factory=dict)
@@ -315,6 +316,10 @@ class HeaderParser:
             if 'Description' in class_info.uclass_metadata:
                 class_info.description = class_info.uclass_metadata['Description']
 
+            # Abstract 플래그 확인
+            if 'Abstract' in class_info.uclass_metadata:
+                class_info.is_abstract = True
+
         # UPROPERTY 파싱 (주석 제거된 버전에서)
         uproperty_decls = self._parse_uproperty_declarations(content_no_comments)
         for metadata_str, prop_type, prop_name in uproperty_decls:
@@ -370,6 +375,15 @@ class HeaderParser:
             key = match.group(1)
             value = match.group(2)
             result[key] = value
+
+        # 단독 플래그 찾기 (예: Abstract, Blueprintable 등)
+        # Key="Value" 패턴이 아닌 단독 단어를 찾음
+        # 콤마나 괄호로 구분된 단어들을 추출
+        flags = re.findall(r'\b([A-Z]\w+)\b(?!\s*=)', metadata)
+        for flag in flags:
+            # 'true' 값으로 저장하여 플래그 존재 여부 표시
+            if flag not in result:  # Key="Value"로 이미 파싱된 것은 건너뜀
+                result[flag] = 'true'
 
         return result
 
@@ -448,4 +462,40 @@ class HeaderParser:
             except Exception as e:
                 print(f" Error parsing {header}: {e}")
 
+        # 상속 그래프 구축 (각 클래스가 어떤 베이스 클래스를 상속하는지 추적)
+        self._build_inheritance_graph(classes)
+
         return classes
+
+    def _build_inheritance_graph(self, classes: List[ClassInfo]):
+        """
+        상속 그래프를 구축하여 각 클래스에 is_derived_from() 메서드 추가
+
+        이를 통해 간접 상속도 판단 가능:
+        - UMeshComponent → USceneComponent → UActorComponent
+        - is_derived_from('UActorComponent') = True
+        """
+        # 클래스 이름 -> ClassInfo 매핑
+        class_map = {cls.name: cls for cls in classes}
+
+        def is_derived_from(class_info: ClassInfo, base_name: str) -> bool:
+            """클래스가 base_name을 (직접/간접) 상속하는지 확인"""
+            if class_info.name == base_name:
+                return True
+            if not class_info.parent:
+                return False
+            if class_info.parent == base_name:
+                return True
+
+            # 부모 클래스가 class_map에 있으면 재귀 검색
+            parent_class = class_map.get(class_info.parent)
+            if parent_class:
+                return is_derived_from(parent_class, base_name)
+
+            # 부모가 리플렉션 클래스가 아니면 (예: UObject)
+            # 이름으로만 판단
+            return class_info.parent == base_name
+
+        # 각 ClassInfo에 메서드 바인딩
+        for cls in classes:
+            cls.is_derived_from = lambda base_name, c=cls: is_derived_from(c, base_name)
